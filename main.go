@@ -49,6 +49,10 @@ func (t *ProxyHandler) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 
 	resp, err := http.DefaultTransport.RoundTrip(req)
+	if err != nil {
+		log.Print("Unable to round trip", err)
+		return nil, err
+	}
 
 	fmt.Fprintf(&sb, "\n\n%v\n", resp.StatusCode)
 
@@ -58,20 +62,26 @@ func (t *ProxyHandler) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	if resp.Body != nil {
 		defer resp.Body.Close()
-		buf, _ := io.ReadAll(resp.Body)
+		buf, err := io.ReadAll(resp.Body)
+		if err != nil {
+			log.Print("Unable to read message body", err)
+			return nil, err
+		}
 		req_rc := io.NopCloser(bytes.NewBuffer(buf))
 		resp.Body = req_rc
 
 		if resp.Header.Get("Content-Encoding") == "gzip" {
 			reader := bytes.NewReader(buf)
-			gzreader, e1 := gzip.NewReader(reader)
-			if e1 != nil {
-				fmt.Println(e1) // Maybe panic here, depends on your error handling.
+			gzreader, err := gzip.NewReader(reader)
+			if err != nil {
+				log.Print("Unable read gzip encoded message", err)
+				return nil, err
 			}
 
-			output, e2 := ioutil.ReadAll(gzreader)
-			if e2 != nil {
-				fmt.Println(e2)
+			output, err := ioutil.ReadAll(gzreader)
+			if err != nil {
+				log.Print("Unable extract gzip encoded message", err)
+				return nil, err
 			}
 			sb.WriteString("\n<<< GZIP ENCODED >>>\n")
 			sb.WriteString(string(output))
@@ -83,7 +93,7 @@ func (t *ProxyHandler) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	log.Printf("\n%v", sb.String())
 
-	return resp, err
+	return resp, nil
 }
 
 func (h *ProxyHandler) ProxyRequest(w http.ResponseWriter, r *http.Request) {
@@ -104,7 +114,11 @@ func main() {
 	log.Printf("Start a Server, (HTTP Client) --> [Proxy] %s%s --> [Dest Url] %s\n", svrAddr, svrBaseUrl, destUrlStr)
 
 	// Create a proxy instance with given params
-	destUrl, _ := url.Parse(destUrlStr)
+	destUrl, err := url.Parse(destUrlStr)
+	if err != nil {
+		log.Fatalf("Unable to parse destination url: %s", destUrlStr)
+	}
+
 	// Create a new ProxyHandler
 	proxyHandler := NewProxyHandler(destUrl)
 
@@ -112,7 +126,7 @@ func main() {
 	http.HandleFunc(svrBaseUrl, proxyHandler.ProxyRequest)
 
 	// Start a proxy server
-	err := http.ListenAndServe(svrAddr, nil)
+	err = http.ListenAndServe(svrAddr, nil)
 	if err != nil {
 		panic(err)
 	}
